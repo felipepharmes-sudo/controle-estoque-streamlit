@@ -1,9 +1,12 @@
+python
 import sqlite3
 from pathlib import Path
+from datetime import date
 
 import pandas as pd
 import streamlit as st
 
+# Caminho do banco SQLite
 DB_PATH = Path("estoque.db")
 
 
@@ -14,6 +17,7 @@ def get_conn():
 
 
 def init_db():
+    """Garante que a tabela exista (não altera se já existir)."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -37,20 +41,22 @@ def init_db():
 
 
 def load_data() -> pd.DataFrame:
+    """Lê todos os produtos do banco para um DataFrame."""
     conn = get_conn()
     df = pd.read_sql_query("SELECT * FROM produtos", conn)
     conn.close()
     return df
 
 
-def save_changes(df_editado: pd.DataFrame, df_original: pd.DataFrame):
+def save_changes(df_editado: pd.DataFrame):
+    """Aplica INSERT/UPDATE no SQLite com base no DataFrame editado."""
     conn = get_conn()
     cur = conn.cursor()
 
-    # Atualizar linhas existentes
-    for _, row in df_editado.iterrows():
-        if pd.notna(row["id"]):
-           cur.execute(
+    # Linhas que já têm id -> UPDATE
+    existentes = df_editado[df_editado["id"].notna()]
+    for _, row in existentes.iterrows():
+        cur.execute(
             """
             UPDATE produtos SET
                 produto = ?,
@@ -72,16 +78,17 @@ def save_changes(df_editado: pd.DataFrame, df_original: pd.DataFrame):
                 row.get("status_reposicao") or "nao_solicitado",
                 int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
                 row.get("fornecedor"),
+                # DateColumn devolve string ISO (YYYY-MM-DD) ou None, aceito pelo SQLite [web:156][web:159]
                 row.get("data_ultima_compra"),
                 row.get("previsao_entrega"),
                 int(row["id"]),
             ),
         )
 
-    # Inserir novas linhas (id vazio)
+    # Linhas novas (sem id) -> INSERT
     novos = df_editado[df_editado["id"].isna()]
     for _, row in novos.iterrows():
-          cur.execute(
+        cur.execute(
             """
             INSERT INTO produtos
                 (produto, sku, qtd_atual, ponto_reposicao, status_reposicao,
@@ -101,6 +108,10 @@ def save_changes(df_editado: pd.DataFrame, df_original: pd.DataFrame):
             ),
         )
 
+    conn.commit()
+    conn.close()
+
+
 # ---------- App Streamlit ----------
 
 st.set_page_config(page_title="Controle de Estoque", layout="wide")
@@ -109,7 +120,7 @@ st.title("Controle de Estoque - Reposição Visual com SQLite")
 init_db()
 df = load_data()
 
-# Se o banco estiver vazio, cria alguns exemplos
+# Se o banco estiver vazio, cria alguns exemplos iniciais em memória
 if df.empty:
     df = pd.DataFrame(
         [
@@ -140,12 +151,29 @@ if df.empty:
         ]
     )
 
-# Normaliza tipos
+# Garante que todas as colunas esperadas existam (se o banco for antigo)
+for col in [
+    "produto",
+    "sku",
+    "qtd_atual",
+    "ponto_reposicao",
+    "status_reposicao",
+    "disponivel_mercado",
+    "fornecedor",
+    "data_ultima_compra",
+    "previsao_entrega",
+]:
+    if col not in df.columns:
+        df[col] = None
+
+# Normaliza tipos base
 df["qtd_atual"] = df["qtd_atual"].fillna(0).astype(int)
 df["ponto_reposicao"] = df["ponto_reposicao"].fillna(0).astype(int)
 df["disponivel_mercado"] = df["disponivel_mercado"].fillna(1).astype(int)
+df["status_reposicao"] = df["status_reposicao"].fillna("nao_solicitado")
 
-# Calcula situação + ícone (mais visual ao invés de colorir células, que é limitado no st.data_editor) [web:148][web:153]
+
+# Situação e prioridade
 def classificar_linha(row):
     if row["qtd_atual"] <= 0 and row["disponivel_mercado"] == 0:
         return "🔴 Sem estoque e sem mercado"
@@ -157,9 +185,7 @@ def classificar_linha(row):
         return "🟡 Baixo"
     return "🟢 OK"
 
-df["situacao"] = df.apply(classificar_linha, axis=1)
 
-# Prioridade numérica (para ordenar a tabela: maior = mais urgente)
 def prioridade(row):
     txt = row["situacao"]
     if "Sem estoque e sem mercado" in txt:
@@ -170,11 +196,13 @@ def prioridade(row):
         return 2
     if "Baixo" in txt:
         return 1
-    return 0  # OK
+    return 0
 
+
+df["situacao"] = df.apply(classificar_linha, axis=1)
 df["prioridade"] = df.apply(prioridade, axis=1)
 
-# Ordena já deixando os piores em cima
+# Ordena pelos piores casos primeiro
 df = df.sort_values("prioridade", ascending=False)
 
 # KPIs
@@ -183,36 +211,27 @@ estoque_baixo = (df["qtd_atual"] <= df["ponto_reposicao"]).sum()
 sem_estoque = (df["qtd_atual"] <= 0).sum()
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Itens cadastrados", total_itens)
+col1.metric("Itens cadastrados", int(total_itens))
 col2.metric("Baixo / crítico", int(estoque_baixo))
 col3.metric("Sem estoque", int(sem_estoque))
 
-st.subheader("Filtros rápidos")
-colf1, colf2 = st.columns(2)
-filtro_somente_problema = colf1.checkbox("Mostrar só itens com problema (não OK)", value=False)
-filtro_somente_sem_mercado = colf2.checkbox("Mostrar só itens sem mercado", value=False)
-
-df_view = df.copy()
-if filtro_somente_problema:
-    df_view = df_view[~df_view["situacao"].str.contains("OK")]
-if filtro_somente_sem_mercado:
-    df_view = df_view[df_view["situacao"].str.contains("mercado")]
-
 st.subheader("Tabela de produtos (dados em SQLite)")
 
-olumn_config = {
+# Configuração das colunas da tabela (inclui DateColumn com date picker) [web:156][web:161]
+column_config = {
     "disponivel_mercado": st.column_config.CheckboxColumn("Disponível no mercado"),
     "status_reposicao": st.column_config.SelectboxColumn(
         "Status reposição",
         options=["nao_solicitado", "solicitado", "em_transito", "recebido"],
     ),
     "situacao": st.column_config.TextColumn("Situação", disabled=True),
+    "prioridade": st.column_config.NumberColumn("Prioridade", disabled=True),
     "fornecedor": st.column_config.TextColumn("Fornecedor"),
     "data_ultima_compra": st.column_config.DateColumn(
         "Última compra",
         format="DD/MM/YYYY",
         default=None,
-    ),  # date picker direto na célula [web:156][web:159]
+    ),
     "previsao_entrega": st.column_config.DateColumn(
         "Previsão de entrega",
         format="DD/MM/YYYY",
@@ -220,13 +239,14 @@ olumn_config = {
     ),
 }
 
-# Precisamos salvar no df completo (df), não só na view filtrada.
-# Então alinhamos pelo id.
-if st.button("Salvar alterações no banco"):
-    # junta edição de volta no df original (pelo id)
-    df_atualizado = df.set_index("id").combine_first(
-        edited_df.set_index("id")
-    ).reset_index()
+edited_df = st.data_editor(
+    df,
+    num_rows="dynamic",
+    hide_index=True,
+    column_config=column_config,
+    use_container_width=True,
+)
 
-    save_changes(df_atualizado, df)
+if st.button("Salvar alterações no banco"):
+    save_changes(edited_df)
     st.success("Alterações salvas em estoque.db. Recarregue a página para ver a situação recalculada.")
