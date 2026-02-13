@@ -4,7 +4,8 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
-import altair as alt  # para o gráfico [web:191][web:197]
+import altair as alt  # gráfico
+
 
 # Caminho do banco SQLite
 DB_PATH = Path("estoque.db")
@@ -17,7 +18,40 @@ def get_conn():
 
 
 def init_db():
-    """Garante que a tabela exista (não altera se já existir)."""
+    """Garante que a tabela exista e, se estiver com colunas antigas, recria o banco."""
+    required_cols = [
+        "id",
+        "produto",
+        "sku",
+        "qtd_atual",
+        "ponto_reposicao",
+        "status_reposicao",
+        "disponivel_mercado",
+        "fornecedor",
+        "data_ultima_compra",
+        "previsao_entrega",
+    ]
+
+    # Se o arquivo já existir, checa se falta alguma coluna
+    if DB_PATH.exists():
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(produtos)")
+            rows = cur.fetchall()
+            conn.close()
+
+            existing_cols = [r[1] for r in rows]  # nome da coluna é índice 1
+
+            # Se a tabela existir e estiver incompleta, apaga o banco pra recriar limpo
+            if existing_cols and any(col not in existing_cols for col in required_cols):
+                DB_PATH.unlink()  # deleta estoque.db antigo
+        except Exception:
+            # Se der qualquer erro bizarro, também recria o banco
+            if DB_PATH.exists():
+                DB_PATH.unlink()
+
+    # Cria a tabela com o esquema completo
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -221,7 +255,6 @@ st.subheader("Visão gráfica de estoque")
 if df.empty:
     st.info("Nenhum item cadastrado para exibir no gráfico.")
 else:
-    # Limita a, por exemplo, 30 itens mais críticos para não poluir o gráfico
     chart_df = df.copy().head(30)
 
     base = alt.Chart(chart_df).encode(
@@ -244,14 +277,12 @@ else:
     )
 
     grafico = barras + pontos
-
-    st.altair_chart(grafico, use_container_width=True)  # integração padrão Streamlit + Altair [web:191][web:197]
+    st.altair_chart(grafico, use_container_width=True)
 
 # ---------- Abas ----------
 
 tab_geral, tab_urgentes = st.tabs(["Visão geral", "Urgentes"])
 
-# Configuração das colunas da tabela (inclui DateColumn com date picker) [web:156][web:161]
 column_config = {
     "disponivel_mercado": st.column_config.CheckboxColumn("Disponível no mercado"),
     "status_reposicao": st.column_config.SelectboxColumn(
