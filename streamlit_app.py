@@ -231,6 +231,10 @@ df["ponto_reposicao"] = df["ponto_reposicao"].fillna(0).astype(int)
 df["disponivel_mercado"] = df["disponivel_mercado"].fillna(1).astype(int)
 df["status_reposicao"] = df["status_reposicao"].fillna("nao_solicitado")
 
+# Converte colunas de data para tipo date (compatível com DateColumn) [web:156]
+df["data_ultima_compra"] = pd.to_datetime(df["data_ultima_compra"], errors="coerce").dt.date
+df["previsao_entrega"] = pd.to_datetime(df["previsao_entrega"], errors="coerce").dt.date
+
 
 # Situação e prioridade
 def classificar_linha(row):
