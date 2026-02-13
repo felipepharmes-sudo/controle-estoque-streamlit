@@ -56,7 +56,6 @@ def get_conn():
 def init_db():
     """Garante que a tabela exista e, se estiver com colunas antigas, recria o banco."""
     required_cols = [
-        "id",
         "produto",
         "sku",
         "categoria",
