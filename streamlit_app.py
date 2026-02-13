@@ -98,7 +98,6 @@ st.set_page_config(page_title="Controle de Estoque", layout="wide")
 st.title("Controle de Estoque - Reposição Visual com SQLite")
 
 init_db()
-
 df = load_data()
 
 # Se o banco estiver vazio, cria alguns exemplos
@@ -118,25 +117,55 @@ if df.empty:
                 "id": None,
                 "produto": "Exemplo 2",
                 "sku": "SKU002",
-                "qtd_atual": 2,
+                "qtd_atual": 0,
                 "ponto_reposicao": 5,
                 "status_reposicao": "solicitado",
-                "disponivel_mercado": 1,
+                "disponivel_mercado": 0,
             },
         ]
     )
 
-# KPIs simples
+# Normaliza tipos
+df["qtd_atual"] = df["qtd_atual"].fillna(0).astype(int)
+df["ponto_reposicao"] = df["ponto_reposicao"].fillna(0).astype(int)
+df["disponivel_mercado"] = df["disponivel_mercado"].fillna(1).astype(int)
+
+# Calcula situação + ícone (mais visual ao invés de colorir células, que é limitado no st.data_editor) [web:148][web:153]
+def classificar_linha(row):
+    if row["qtd_atual"] <= 0 and row["disponivel_mercado"] == 0:
+        return "🔴 Sem estoque e sem mercado"
+    if row["qtd_atual"] <= row["ponto_reposicao"] and row["disponivel_mercado"] == 0:
+        return "🟥 Crítico (mercado ruim)"
+    if row["qtd_atual"] <= 0:
+        return "🟠 Sem estoque"
+    if row["qtd_atual"] <= row["ponto_reposicao"]:
+        return "🟡 Baixo"
+    return "🟢 OK"
+
+df["situacao"] = df.apply(classificar_linha, axis=1)
+
+# KPIs
 total_itens = len(df)
 estoque_baixo = (df["qtd_atual"] <= df["ponto_reposicao"]).sum()
-em_reposicao = df["status_reposicao"].isin(["solicitado", "em_transito"]).sum()
+sem_estoque = (df["qtd_atual"] <= 0).sum()
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Itens cadastrados", total_itens)
-col2.metric("Estoque baixo/critico", int(estoque_baixo))
-col3.metric("Em reposição", int(em_reposicao))
+col2.metric("Baixo / crítico", int(estoque_baixo))
+col3.metric("Sem estoque", int(sem_estoque))
 
-st.subheader("Tabela de produtos (dados salvos em SQLite)")
+st.subheader("Filtros rápidos")
+colf1, colf2 = st.columns(2)
+filtro_somente_problema = colf1.checkbox("Mostrar só itens com problema (não OK)", value=False)
+filtro_somente_sem_mercado = colf2.checkbox("Mostrar só itens sem mercado", value=False)
+
+df_view = df.copy()
+if filtro_somente_problema:
+    df_view = df_view[~df_view["situacao"].str.contains("OK")]
+if filtro_somente_sem_mercado:
+    df_view = df_view[df_view["situacao"].str.contains("mercado")]
+
+st.subheader("Tabela de produtos (dados em SQLite)")
 
 column_config = {
     "disponivel_mercado": st.column_config.CheckboxColumn("Disponível no mercado"),
@@ -144,16 +173,24 @@ column_config = {
         "Status reposição",
         options=["nao_solicitado", "solicitado", "em_transito", "recebido"],
     ),
+    "situacao": st.column_config.TextColumn("Situação", disabled=True),
 }
 
 edited_df = st.data_editor(
-    df,
+    df_view,
     num_rows="dynamic",
     hide_index=True,
     column_config=column_config,
     use_container_width=True,
 )
 
+# Precisamos salvar no df completo (df), não só na view filtrada.
+# Então alinhamos pelo id.
 if st.button("Salvar alterações no banco"):
-    save_changes(edited_df, df)
-    st.success("Alterações salvas em estoque.db. Recarregue a página para ver os dados atualizados.")
+    # junta edição de volta no df original (pelo id)
+    df_atualizado = df.set_index("id").combine_first(
+        edited_df.set_index("id")
+    ).reset_index()
+
+    save_changes(df_atualizado, df)
+    st.success("Alterações salvas em estoque.db. Recarregue a página para ver a situação recalculada.")
