@@ -91,14 +91,27 @@ def save_changes(df_editado: pd.DataFrame):
     if "id" not in df_editado.columns:
         df_editado["id"] = None
 
+    # Normaliza datas para string ISO ou None (evita tipos não suportados pelo sqlite3) [web:217][web:221]
+    def _norm_date(val):
+        if pd.isna(val) or val is None:
+            return None
+        try:
+            # converte para datetime e pega só a data
+            return pd.to_datetime(val).date().isoformat()
+        except Exception:
+            # fallback: string simples
+            return str(val)
+
     # Linhas que já têm id -> UPDATE
     existentes = df_editado[df_editado["id"].notna()]
     for _, row in existentes.iterrows():
         try:
             id_val = int(row["id"])
         except (TypeError, ValueError):
-            # Se o id estiver estranho (string vazia, etc.), ignora essa linha
             continue
+
+        data_compra = _norm_date(row.get("data_ultima_compra"))
+        previsao = _norm_date(row.get("previsao_entrega"))
 
         cur.execute(
             """
@@ -122,8 +135,8 @@ def save_changes(df_editado: pd.DataFrame):
                 row.get("status_reposicao") or "nao_solicitado",
                 int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
                 row.get("fornecedor"),
-                row.get("data_ultima_compra"),
-                row.get("previsao_entrega"),
+                data_compra,
+                previsao,
                 id_val,
             ),
         )
@@ -131,32 +144,9 @@ def save_changes(df_editado: pd.DataFrame):
     # Linhas novas (sem id) -> INSERT
     novos = df_editado[df_editado["id"].isna()]
     for _, row in novos.iterrows():
-        cur.execute(
-            """
-            INSERT INTO produtos
-                (produto, sku, qtd_atual, ponto_reposicao, status_reposicao,
-                 disponivel_mercado, fornecedor, data_ultima_compra, previsao_entrega)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                row.get("produto"),
-                row.get("sku"),
-                int(row["qtd_atual"]) if pd.notna(row["qtd_atual"]) else None,
-                int(row["ponto_reposicao"]) if pd.notna(row["ponto_reposicao"]) else None,
-                row.get("status_reposicao") or "nao_solicitado",
-                int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
-                row.get("fornecedor"),
-                row.get("data_ultima_compra"),
-                row.get("previsao_entrega"),
-            ),
-        )
+        data_compra = _norm_date(row.get("data_ultima_compra"))
+        previsao = _norm_date(row.get("previsao_entrega"))
 
-    conn.commit()
-    conn.close()
-    
-    # Linhas novas (sem id) -> INSERT
-    novos = df_editado[df_editado["id"].isna()]
-    for _, row in novos.iterrows():
         cur.execute(
             """
             INSERT INTO produtos
@@ -172,8 +162,8 @@ def save_changes(df_editado: pd.DataFrame):
                 row.get("status_reposicao") or "nao_solicitado",
                 int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
                 row.get("fornecedor"),
-                row.get("data_ultima_compra"),
-                row.get("previsao_entrega"),
+                data_compra,
+                previsao,
             ),
         )
 
