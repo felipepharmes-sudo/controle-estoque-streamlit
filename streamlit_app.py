@@ -77,7 +77,6 @@ def save_changes(df_editado: pd.DataFrame):
                 row.get("status_reposicao") or "nao_solicitado",
                 int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
                 row.get("fornecedor"),
-                # DateColumn devolve string ISO (YYYY-MM-DD) ou None, aceito pelo SQLite [web:156][web:159]
                 row.get("data_ultima_compra"),
                 row.get("previsao_entrega"),
                 int(row["id"]),
@@ -204,7 +203,7 @@ df["prioridade"] = df.apply(prioridade, axis=1)
 # Ordena pelos piores casos primeiro
 df = df.sort_values("prioridade", ascending=False)
 
-# KPIs
+# KPIs gerais
 total_itens = len(df)
 estoque_baixo = (df["qtd_atual"] <= df["ponto_reposicao"]).sum()
 sem_estoque = (df["qtd_atual"] <= 0).sum()
@@ -214,9 +213,10 @@ col1.metric("Itens cadastrados", int(total_itens))
 col2.metric("Baixo / crítico", int(estoque_baixo))
 col3.metric("Sem estoque", int(sem_estoque))
 
-st.subheader("Tabela de produtos (dados em SQLite)")
+# ---------- Abas ----------  [web:186][web:192]
+tab_geral, tab_urgentes = st.tabs(["Visão geral", "Urgentes"])
 
-# Configuração das colunas da tabela (inclui DateColumn com date picker) [web:156][web:161]
+# Configuração das colunas da tabela (inclui DateColumn com date picker)
 column_config = {
     "disponivel_mercado": st.column_config.CheckboxColumn("Disponível no mercado"),
     "status_reposicao": st.column_config.SelectboxColumn(
@@ -238,14 +238,39 @@ column_config = {
     ),
 }
 
-edited_df = st.data_editor(
-    df,
-    num_rows="dynamic",
-    hide_index=True,
-    column_config=column_config,
-    use_container_width=True,
-)
+with tab_geral:
+    st.subheader("Todos os produtos")
+    edited_df = st.data_editor(
+        df,
+        num_rows="dynamic",
+        hide_index=True,
+        column_config=column_config,
+        use_container_width=True,
+    )
 
-if st.button("Salvar alterações no banco"):
-    save_changes(edited_df)
-    st.success("Alterações salvas em estoque.db. Recarregue a página para ver a situação recalculada.")
+    if st.button("Salvar alterações no banco"):
+        save_changes(edited_df)
+        st.success("Alterações salvas em estoque.db. Recarregue a página para ver a situação recalculada.")
+
+with tab_urgentes:
+    st.subheader("Itens urgentes (prioridade > 0)")
+    df_urg = df[df["prioridade"] > 0].copy()
+
+    if df_urg.empty:
+        st.info("Nenhum item urgente no momento 😎")
+    else:
+        # Mostra só colunas mais relevantes
+        colunas_mostrar = [
+            "produto",
+            "sku",
+            "qtd_atual",
+            "ponto_reposicao",
+            "situacao",
+            "status_reposicao",
+            "fornecedor",
+            "previsao_entrega",
+        ]
+        st.dataframe(
+            df_urg[colunas_mostrar],
+            use_container_width=True,
+        )
