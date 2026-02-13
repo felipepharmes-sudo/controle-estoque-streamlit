@@ -31,7 +31,6 @@ def check_password():
             st.session_state["password_ok"] = False
 
     if "password_ok" not in st.session_state:
-        # Primeira vez: mostra campo de senha
         st.text_input(
             "Senha", type="password", on_change=password_entered, key="password"
         )
@@ -56,6 +55,7 @@ def get_conn():
 def init_db():
     """Garante que a tabela exista e, se estiver com colunas antigas, recria o banco."""
     required_cols = [
+        "id",
         "produto",
         "sku",
         "categoria",
@@ -66,7 +66,7 @@ def init_db():
         "fornecedor",
         "data_ultima_compra",
         "previsao_entrega",
-        "consumo_diario",
+        "consumo_diario",  # ainda existe no schema, mas não é usada nos cálculos
     ]
 
     # Se o arquivo já existir, checa se falta alguma coluna
@@ -174,7 +174,7 @@ def save_changes(df_editado: pd.DataFrame):
                 row.get("fornecedor"),
                 data_compra,
                 previsao,
-                float(row["consumo_diario"]) if pd.notna(row["consumo_diario"]) else None,
+                None,  # não usamos mais consumo_diario manual
                 id_val,
             ),
         )
@@ -204,7 +204,7 @@ def save_changes(df_editado: pd.DataFrame):
                 row.get("fornecedor"),
                 data_compra,
                 previsao,
-                float(row["consumo_diario"]) if pd.notna(row["consumo_diario"]) else None,
+                None,  # não usamos mais consumo_diario manual
             ),
         )
 
@@ -217,7 +217,7 @@ def save_changes(df_editado: pd.DataFrame):
 st.set_page_config(page_title="Controle de Estoque", layout="wide")
 
 # Autenticação
-check_password()  # bloqueia o app se a senha estiver errada [web:238]
+check_password()  # bloqueia o app se a senha estiver errada [web:236][web:238]
 
 st.title("Controle de Estoque - Reposição Visual com SQLite")
 
@@ -234,13 +234,13 @@ if df.empty:
                 "sku": "SKU001",
                 "categoria": "Medicamento",
                 "qtd_atual": 5,
-                "ponto_reposicao": 10,
+                "ponto_reposicao": 350,  # ~10 unidades/dia por 35 dias
                 "status_reposicao": "nao_solicitado",
                 "disponivel_mercado": 1,
                 "fornecedor": "Fornecedor A",
                 "data_ultima_compra": None,
                 "previsao_entrega": None,
-                "consumo_diario": 1.5,
+                "consumo_diario": None,
             },
             {
                 "id": None,
@@ -248,13 +248,13 @@ if df.empty:
                 "sku": "SKU002",
                 "categoria": "Insumo",
                 "qtd_atual": 0,
-                "ponto_reposicao": 5,
+                "ponto_reposicao": 700,
                 "status_reposicao": "solicitado",
                 "disponivel_mercado": 0,
                 "fornecedor": "Fornecedor B",
                 "data_ultima_compra": None,
                 "previsao_entrega": None,
-                "consumo_diario": 0.8,
+                "consumo_diario": None,
             },
         ]
     )
@@ -281,7 +281,6 @@ df["qtd_atual"] = df["qtd_atual"].fillna(0).astype(int)
 df["ponto_reposicao"] = df["ponto_reposicao"].fillna(0).astype(int)
 df["disponivel_mercado"] = df["disponivel_mercado"].fillna(1).astype(int)
 df["status_reposicao"] = df["status_reposicao"].fillna("nao_solicitado")
-df["consumo_diario"] = df["consumo_diario"].fillna(0).astype(float)
 
 # Datas em tipo date (compatível com DateColumn) [web:156]
 df["data_ultima_compra"] = pd.to_datetime(
@@ -291,7 +290,16 @@ df["previsao_entrega"] = pd.to_datetime(
     df["previsao_entrega"], errors="coerce"
 ).dt.date
 
-# Situação, prioridade e previsão de ruptura
+# Consumo diário calculado a partir do ponto de reposição (35 dias)
+def calc_consumo_diario(ponto):
+    if ponto and ponto > 0:
+        return ponto / 35.0
+    return None
+
+
+df["consumo_diario_calc"] = df["ponto_reposicao"].apply(calc_consumo_diario)
+
+# Situação, prioridade e previsão de ruptura usando consumo_diario_calc
 def classificar_linha(row):
     if row["qtd_atual"] <= 0 and row["disponivel_mercado"] == 0:
         return "🔴 Sem estoque e sem mercado"
@@ -318,8 +326,9 @@ def prioridade(row):
 
 
 def dias_estoque(row):
-    if row["consumo_diario"] and row["consumo_diario"] > 0:
-        return row["qtd_atual"] / row["consumo_diario"]
+    c = row.get("consumo_diario_calc")
+    if c and c > 0:
+        return row["qtd_atual"] / c
     return None
 
 
@@ -347,7 +356,7 @@ col1.metric("Itens cadastrados", int(total_itens))
 col2.metric("Baixo / crítico", int(estoque_baixo))
 col3.metric("Sem estoque", int(sem_estoque))
 
-# ---------- Gráfico de estoque vs ponto de reposição ----------
+# ---------- Visão gráfica ----------
 
 st.subheader("Visão gráfica de estoque")
 
@@ -382,7 +391,7 @@ else:
 
 tab_geral, tab_urgentes = st.tabs(["Visão geral", "Urgentes"])
 
-# Configuração das colunas da tabela (inclui DateColumn com date picker e campos de negócio) [web:156][web:161]
+# Configuração das colunas (DateColumn + campos calculados) [web:156][web:161]
 column_config = {
     "disponivel_mercado": st.column_config.CheckboxColumn("Disponível no mercado"),
     "status_reposicao": st.column_config.SelectboxColumn(
@@ -393,8 +402,8 @@ column_config = {
     "prioridade": st.column_config.NumberColumn("Prioridade", disabled=True),
     "categoria": st.column_config.TextColumn("Categoria"),
     "fornecedor": st.column_config.TextColumn("Fornecedor"),
-    "consumo_diario": st.column_config.NumberColumn(
-        "Consumo diário (unid/dia)", format="%.2f"
+    "consumo_diario_calc": st.column_config.NumberColumn(
+        "Consumo diário (35 dias)", disabled=True, format="%.2f"
     ),
     "data_ultima_compra": st.column_config.DateColumn(
         "Última compra",
@@ -416,7 +425,7 @@ column_config = {
 
 @st.cache_data
 def df_to_csv(dataframe: pd.DataFrame) -> bytes:
-    """Converte DataFrame para CSV em bytes, pronto para download_button."""  # [web:232][web:226]
+    """Converte DataFrame para CSV em bytes, pronto para download_button."""  # [web:225][web:232]
     return dataframe.to_csv(index=False).encode("utf-8")
 
 
@@ -455,7 +464,6 @@ with tab_geral:
         save_changes(edited_df)
         st.success("Alterações salvas em estoque.db. Recarregue a página para ver a situação recalculada.")
 
-    # Download CSV da visão atual
     csv_all = df_to_csv(df_view)
     colb2.download_button(
         "Baixar visão atual (CSV)",
@@ -480,7 +488,7 @@ with tab_urgentes:
             "situacao",
             "status_reposicao",
             "fornecedor",
-            "consumo_diario",
+            "consumo_diario_calc",
             "dias_estoque",
             "data_ruptura_prevista",
             "previsao_entrega",
