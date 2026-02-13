@@ -234,7 +234,7 @@ if df.empty:
                 "sku": "SKU001",
                 "categoria": "Medicamento",
                 "qtd_atual": 5,
-                "ponto_reposicao": 350,  # ~10 unidades/dia por 35 dias
+                "ponto_reposicao": 350,
                 "status_reposicao": "nao_solicitado",
                 "disponivel_mercado": 1,
                 "fornecedor": "Fornecedor A",
@@ -391,9 +391,11 @@ else:
     grafico = barras + pontos
     st.altair_chart(grafico, use_container_width=True)
 
-# ---------- Abas ----------
+# ---------- Abas ----------  [web:186][web:190]
 
-tab_geral, tab_urgentes = st.tabs(["Visão geral", "Urgentes"])
+tab_geral, tab_urgentes, tab_sem_mercado = st.tabs(
+    ["Visão geral", "Urgentes", "Sem mercado"]
+)
 
 # Configuração das colunas (DateColumn + campos calculados) [web:156][web:161]
 column_config = {
@@ -507,5 +509,40 @@ with tab_urgentes:
             "Baixar urgentes (CSV)",
             data=csv_urg,
             file_name="estoque_urgentes.csv",
+            mime="text/csv",
+        )
+
+with tab_sem_mercado:
+    st.subheader("Itens sem disponibilidade no mercado")
+
+    df_sem = df[df["disponivel_mercado"] == 0].copy()  # filtro booleano direto [web:292][web:294]
+
+    if df_sem.empty:
+        st.info("Nenhum item marcado como sem mercado no momento.")
+    else:
+        colunas_mostrar_sem = [
+            "produto",
+            "sku",
+            "categoria",
+            "qtd_atual",
+            "ponto_reposicao",
+            "situacao",
+            "status_reposicao",
+            "fornecedor",
+            "consumo_diario_calc",
+            "dias_estoque",
+            "data_ruptura_prevista",
+            "previsao_entrega",
+        ]
+        st.dataframe(
+            df_sem[colunas_mostrar_sem],
+            use_container_width=True,
+        )
+
+        csv_sem = df_to_csv(df_sem[colunas_mostrar_sem])
+        st.download_button(
+            "Baixar sem mercado (CSV)",
+            data=csv_sem,
+            file_name="estoque_sem_mercado.csv",
             mime="text/csv",
         )
