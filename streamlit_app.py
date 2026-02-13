@@ -127,7 +127,7 @@ def save_changes(df_editado: pd.DataFrame):
     if "id" not in df_editado.columns:
         df_editado["id"] = None
 
-    # Normaliza datas para string ISO ou None (evita tipos não suportados) [web:217][web:221]
+    # Normaliza datas para string ISO ou None (evita tipos não suportados)
     def _norm_date(val):
         if pd.isna(val) or val is None:
             return None
@@ -217,7 +217,7 @@ def save_changes(df_editado: pd.DataFrame):
 st.set_page_config(page_title="Controle de Estoque", layout="wide")
 
 # Autenticação
-check_password()  # bloqueia o app se a senha estiver errada [web:236][web:238]
+check_password()
 
 st.title("Controle de Estoque - Reposição Visual com SQLite")
 
@@ -286,7 +286,7 @@ df["ponto_reposicao"] = df["ponto_reposicao"].fillna(0).astype(int)
 df["disponivel_mercado"] = df["disponivel_mercado"].fillna(1).astype(int)
 df["status_reposicao"] = df["status_reposicao"].fillna("nao_solicitado")
 
-# Datas em tipo date (compatível com DateColumn) [web:156]
+# Datas em tipo date (compatível com DateColumn)
 df["data_ultima_compra"] = pd.to_datetime(
     df["data_ultima_compra"], errors="coerce"
 ).dt.date
@@ -391,13 +391,13 @@ else:
     grafico = barras + pontos
     st.altair_chart(grafico, use_container_width=True)
 
-# ---------- Abas ----------  [web:186][web:190]
+# ---------- Abas ----------
 
-tab_geral, tab_urgentes, tab_sem_mercado = st.tabs(
-    ["Visão geral", "Urgentes", "Sem mercado"]
+tab_geral, tab_urgentes, tab_falta_mercado = st.tabs(
+    ["Visão geral", "Urgentes", "Falta no mercado"]
 )
 
-# Configuração das colunas (DateColumn + campos calculados) [web:156][web:161]
+# Configuração das colunas
 column_config = {
     "disponivel_mercado": st.column_config.CheckboxColumn("Disponível no mercado"),
     "status_reposicao": st.column_config.SelectboxColumn(
@@ -431,7 +431,7 @@ column_config = {
 
 @st.cache_data
 def df_to_csv(dataframe: pd.DataFrame) -> bytes:
-    """Converte DataFrame para CSV em bytes, pronto para download_button."""  # [web:225][web:232]
+    """Converte DataFrame para CSV em bytes, pronto para download_button."""
     return dataframe.to_csv(index=False).encode("utf-8")
 
 
@@ -468,7 +468,8 @@ with tab_geral:
     colb1, colb2 = st.columns(2)
     if colb1.button("Salvar alterações no banco"):
         save_changes(edited_df)
-        st.success("Alterações salvas em estoque.db. Recarregue a página para ver a situação recalculada.")
+        st.success("Alterações salvas em estoque.db.")
+        st.rerun()  # recarrega o app para refletir na aba 'Falta no mercado'
 
     csv_all = df_to_csv(df_view)
     colb2.download_button(
@@ -512,13 +513,13 @@ with tab_urgentes:
             mime="text/csv",
         )
 
-with tab_sem_mercado:
-    st.subheader("Itens sem disponibilidade no mercado")
+with tab_falta_mercado:
+    st.subheader("Itens em falta no mercado")
 
-    df_sem = df[df["disponivel_mercado"] == 0].copy()  # filtro booleano direto [web:292][web:294]
+    df_sem = df[df["disponivel_mercado"] == 0].copy()
 
     if df_sem.empty:
-        st.info("Nenhum item marcado como sem mercado no momento.")
+        st.info("Nenhum item marcado como falta no mercado no momento.")
     else:
         colunas_mostrar_sem = [
             "produto",
@@ -541,8 +542,8 @@ with tab_sem_mercado:
 
         csv_sem = df_to_csv(df_sem[colunas_mostrar_sem])
         st.download_button(
-            "Baixar sem mercado (CSV)",
+            "Baixar falta no mercado (CSV)",
             data=csv_sem,
-            file_name="estoque_sem_mercado.csv",
+            file_name="estoque_falta_mercado.csv",
             mime="text/csv",
         )
