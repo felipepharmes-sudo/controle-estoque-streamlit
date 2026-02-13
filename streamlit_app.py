@@ -87,9 +87,19 @@ def save_changes(df_editado: pd.DataFrame):
     conn = get_conn()
     cur = conn.cursor()
 
+    # Garante que a coluna id exista
+    if "id" not in df_editado.columns:
+        df_editado["id"] = None
+
     # Linhas que já têm id -> UPDATE
     existentes = df_editado[df_editado["id"].notna()]
     for _, row in existentes.iterrows():
+        try:
+            id_val = int(row["id"])
+        except (TypeError, ValueError):
+            # Se o id estiver estranho (string vazia, etc.), ignora essa linha
+            continue
+
         cur.execute(
             """
             UPDATE produtos SET
@@ -114,10 +124,36 @@ def save_changes(df_editado: pd.DataFrame):
                 row.get("fornecedor"),
                 row.get("data_ultima_compra"),
                 row.get("previsao_entrega"),
-                int(row["id"]),
+                id_val,
             ),
         )
 
+    # Linhas novas (sem id) -> INSERT
+    novos = df_editado[df_editado["id"].isna()]
+    for _, row in novos.iterrows():
+        cur.execute(
+            """
+            INSERT INTO produtos
+                (produto, sku, qtd_atual, ponto_reposicao, status_reposicao,
+                 disponivel_mercado, fornecedor, data_ultima_compra, previsao_entrega)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.get("produto"),
+                row.get("sku"),
+                int(row["qtd_atual"]) if pd.notna(row["qtd_atual"]) else None,
+                int(row["ponto_reposicao"]) if pd.notna(row["ponto_reposicao"]) else None,
+                row.get("status_reposicao") or "nao_solicitado",
+                int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
+                row.get("fornecedor"),
+                row.get("data_ultima_compra"),
+                row.get("previsao_entrega"),
+            ),
+        )
+
+    conn.commit()
+    conn.close()
+    
     # Linhas novas (sem id) -> INSERT
     novos = df_editado[df_editado["id"].isna()]
     for _, row in novos.iterrows():
