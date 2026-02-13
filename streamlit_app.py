@@ -4,6 +4,7 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
+import altair as alt  # para o gráfico [web:191][web:197]
 
 # Caminho do banco SQLite
 DB_PATH = Path("estoque.db")
@@ -213,10 +214,44 @@ col1.metric("Itens cadastrados", int(total_itens))
 col2.metric("Baixo / crítico", int(estoque_baixo))
 col3.metric("Sem estoque", int(sem_estoque))
 
-# ---------- Abas ----------  [web:186][web:192]
+# ---------- Gráfico de estoque vs ponto de reposição ----------
+
+st.subheader("Visão gráfica de estoque")
+
+if df.empty:
+    st.info("Nenhum item cadastrado para exibir no gráfico.")
+else:
+    # Limita a, por exemplo, 30 itens mais críticos para não poluir o gráfico
+    chart_df = df.copy().head(30)
+
+    base = alt.Chart(chart_df).encode(
+        y=alt.Y("produto:N", sort="-x", title="Produto"),
+    )
+
+    barras = base.mark_bar().encode(
+        x=alt.X("qtd_atual:Q", title="Quantidade em estoque"),
+        color=alt.Color("situacao:N", title="Situação"),
+    )
+
+    pontos = base.mark_point(shape="triangle-right", size=80, color="red").encode(
+        x=alt.X("ponto_reposicao:Q", title="Ponto de reposição"),
+        tooltip=[
+            "produto",
+            "qtd_atual",
+            "ponto_reposicao",
+            "situacao",
+        ],
+    )
+
+    grafico = barras + pontos
+
+    st.altair_chart(grafico, use_container_width=True)  # integração padrão Streamlit + Altair [web:191][web:197]
+
+# ---------- Abas ----------
+
 tab_geral, tab_urgentes = st.tabs(["Visão geral", "Urgentes"])
 
-# Configuração das colunas da tabela (inclui DateColumn com date picker)
+# Configuração das colunas da tabela (inclui DateColumn com date picker) [web:156][web:161]
 column_config = {
     "disponivel_mercado": st.column_config.CheckboxColumn("Disponível no mercado"),
     "status_reposicao": st.column_config.SelectboxColumn(
@@ -259,7 +294,6 @@ with tab_urgentes:
     if df_urg.empty:
         st.info("Nenhum item urgente no momento 😎")
     else:
-        # Mostra só colunas mais relevantes
         colunas_mostrar = [
             "produto",
             "sku",
