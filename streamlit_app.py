@@ -276,6 +276,10 @@ for col in [
     if col not in df.columns:
         df[col] = None
 
+# Remove a coluna antiga de consumo manual da visão (mantemos só a calculada)
+if "consumo_diario" in df.columns:
+    df = df.drop(columns=["consumo_diario"])
+
 # Normaliza tipos base
 df["qtd_atual"] = df["qtd_atual"].fillna(0).astype(int)
 df["ponto_reposicao"] = df["ponto_reposicao"].fillna(0).astype(int)
