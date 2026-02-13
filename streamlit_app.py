@@ -144,6 +144,24 @@ def classificar_linha(row):
 
 df["situacao"] = df.apply(classificar_linha, axis=1)
 
+# Prioridade numérica (para ordenar a tabela: maior = mais urgente)
+def prioridade(row):
+    txt = row["situacao"]
+    if "Sem estoque e sem mercado" in txt:
+        return 4
+    if "Crítico (mercado ruim)" in txt:
+        return 3
+    if "Sem estoque" in txt:
+        return 2
+    if "Baixo" in txt:
+        return 1
+    return 0  # OK
+
+df["prioridade"] = df.apply(prioridade, axis=1)
+
+# Ordena já deixando os piores em cima
+df = df.sort_values("prioridade", ascending=False)
+
 # KPIs
 total_itens = len(df)
 estoque_baixo = (df["qtd_atual"] <= df["ponto_reposicao"]).sum()
