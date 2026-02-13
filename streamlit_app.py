@@ -25,7 +25,10 @@ def init_db():
             qtd_atual INTEGER,
             ponto_reposicao INTEGER,
             status_reposicao TEXT,
-            disponivel_mercado INTEGER
+            disponivel_mercado INTEGER,
+            fornecedor TEXT,
+            data_ultima_compra TEXT,
+            previsao_entrega TEXT
         )
         """
     )
@@ -47,36 +50,19 @@ def save_changes(df_editado: pd.DataFrame, df_original: pd.DataFrame):
     # Atualizar linhas existentes
     for _, row in df_editado.iterrows():
         if pd.notna(row["id"]):
-            cur.execute(
-                """
-                UPDATE produtos SET
-                    produto = ?,
-                    sku = ?,
-                    qtd_atual = ?,
-                    ponto_reposicao = ?,
-                    status_reposicao = ?,
-                    disponivel_mercado = ?
-                WHERE id = ?
-                """,
-                (
-                    row.get("produto"),
-                    row.get("sku"),
-                    int(row["qtd_atual"]) if pd.notna(row["qtd_atual"]) else None,
-                    int(row["ponto_reposicao"]) if pd.notna(row["ponto_reposicao"]) else None,
-                    row.get("status_reposicao") or "nao_solicitado",
-                    int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
-                    int(row["id"]),
-                ),
-            )
-
-    # Inserir novas linhas (id vazio)
-    novos = df_editado[df_editado["id"].isna()]
-    for _, row in novos.iterrows():
-        cur.execute(
+           cur.execute(
             """
-            INSERT INTO produtos
-                (produto, sku, qtd_atual, ponto_reposicao, status_reposicao, disponivel_mercado)
-            VALUES (?, ?, ?, ?, ?, ?)
+            UPDATE produtos SET
+                produto = ?,
+                sku = ?,
+                qtd_atual = ?,
+                ponto_reposicao = ?,
+                status_reposicao = ?,
+                disponivel_mercado = ?,
+                fornecedor = ?,
+                data_ultima_compra = ?,
+                previsao_entrega = ?
+            WHERE id = ?
             """,
             (
                 row.get("produto"),
@@ -85,12 +71,35 @@ def save_changes(df_editado: pd.DataFrame, df_original: pd.DataFrame):
                 int(row["ponto_reposicao"]) if pd.notna(row["ponto_reposicao"]) else None,
                 row.get("status_reposicao") or "nao_solicitado",
                 int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
+                row.get("fornecedor"),
+                row.get("data_ultima_compra"),
+                row.get("previsao_entrega"),
+                int(row["id"]),
             ),
         )
 
-    conn.commit()
-    conn.close()
-
+    # Inserir novas linhas (id vazio)
+    novos = df_editado[df_editado["id"].isna()]
+    for _, row in novos.iterrows():
+          cur.execute(
+            """
+            INSERT INTO produtos
+                (produto, sku, qtd_atual, ponto_reposicao, status_reposicao,
+                 disponivel_mercado, fornecedor, data_ultima_compra, previsao_entrega)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.get("produto"),
+                row.get("sku"),
+                int(row["qtd_atual"]) if pd.notna(row["qtd_atual"]) else None,
+                int(row["ponto_reposicao"]) if pd.notna(row["ponto_reposicao"]) else None,
+                row.get("status_reposicao") or "nao_solicitado",
+                int(row["disponivel_mercado"]) if pd.notna(row["disponivel_mercado"]) else 1,
+                row.get("fornecedor"),
+                row.get("data_ultima_compra"),
+                row.get("previsao_entrega"),
+            ),
+        )
 
 # ---------- App Streamlit ----------
 
@@ -112,6 +121,9 @@ if df.empty:
                 "ponto_reposicao": 10,
                 "status_reposicao": "nao_solicitado",
                 "disponivel_mercado": 1,
+                "fornecedor": "Fornecedor A",
+                "data_ultima_compra": None,
+                "previsao_entrega": None,
             },
             {
                 "id": None,
@@ -121,6 +133,9 @@ if df.empty:
                 "ponto_reposicao": 5,
                 "status_reposicao": "solicitado",
                 "disponivel_mercado": 0,
+                "fornecedor": "Fornecedor B",
+                "data_ultima_compra": None,
+                "previsao_entrega": None,
             },
         ]
     )
@@ -185,22 +200,25 @@ if filtro_somente_sem_mercado:
 
 st.subheader("Tabela de produtos (dados em SQLite)")
 
-column_config = {
+olumn_config = {
     "disponivel_mercado": st.column_config.CheckboxColumn("Disponível no mercado"),
     "status_reposicao": st.column_config.SelectboxColumn(
         "Status reposição",
         options=["nao_solicitado", "solicitado", "em_transito", "recebido"],
     ),
     "situacao": st.column_config.TextColumn("Situação", disabled=True),
+    "fornecedor": st.column_config.TextColumn("Fornecedor"),
+    "data_ultima_compra": st.column_config.DateColumn(
+        "Última compra",
+        format="DD/MM/YYYY",
+        default=None,
+    ),  # date picker direto na célula [web:156][web:159]
+    "previsao_entrega": st.column_config.DateColumn(
+        "Previsão de entrega",
+        format="DD/MM/YYYY",
+        default=None,
+    ),
 }
-
-edited_df = st.data_editor(
-    df_view,
-    num_rows="dynamic",
-    hide_index=True,
-    column_config=column_config,
-    use_container_width=True,
-)
 
 # Precisamos salvar no df completo (df), não só na view filtrada.
 # Então alinhamos pelo id.
